@@ -1,0 +1,132 @@
+# 工作流名称
+name: Build and Release C++ Application
+
+# ===============================================================
+# 触发器配置 (Triggers)
+# ===============================================================
+on:
+  # 1. 自动触发 (开发): 当有代码推送到 main 分支时
+  push:
+    branches: [ "main" ]
+  # 2. 自动触发 (发布): 当创建了以 'v' 开头的标签时
+  push:
+    tags:
+      - 'v*'
+  # 3. 手动触发
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: '选择构建类型'
+        type: choice
+        options:
+        - development
+        - release
+        required: true
+        default: 'development'
+      version_tag:
+        description: '【仅发布版需要】输入版本号 (例如: v1.1.0)'
+        required: false
+
+# 全局环境变量
+env:
+  EXECUTABLE_NAME: KillProcesses.exe
+  SOURCE_FILE: main.cpp
+
+# ===============================================================
+# 任务配置 (Jobs)
+# ===============================================================
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    
+    # 定义任务的输出，我们稍后会用到
+    outputs:
+      build_mode: ${{ steps.prepare.outputs.build_mode }}
+      release_version: ${{ steps.prepare.outputs.release_version }}
+
+    steps:
+      # -----------------------------------------------------------------
+      # 第 1 步: 准备阶段 - 判断触发类型并设置变量
+      # -----------------------------------------------------------------
+      - name: 1. Prepare build variables
+        id: prepare
+        shell: pwsh
+        run: |
+          $buildMode = "development"
+          $releaseVersion = ""
+
+          # 情况 A: 自动发布 (通过推送标签)
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            $buildMode = "release"
+            $releaseVersion = "${{ github.ref_name }}"
+          }
+          # 情况 B: 手动触发
+          elseif ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $buildMode = "${{ github.event.inputs.build_type }}"
+            if ($buildMode -eq "release") {
+              $releaseVersion = "${{ github.event.inputs.version_tag }}"
+              if (-not $releaseVersion) {
+                Write-Error "错误：手动触发发布时，必须在'版本号'输入框中提供一个版本号！"
+                exit 1
+              }
+            }
+          }
+          # 情况 C: 自动开发 (默认, 通过推送到main分支)
+          # (此情况已由默认值覆盖)
+
+          echo "Build Mode: $buildMode"
+          echo "Release Version: $releaseVersion"
+          echo "build_mode=$buildMode" >> $env:GITHUB_OUTPUT
+          echo "release_version=$releaseVersion" >> $env:GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------
+      # 第 2 步: 检出代码
+      # -----------------------------------------------------------------
+      - name: 2. Check out repository code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------
+      # 第 3 步: 设置 MSVC 开发环境
+      # -----------------------------------------------------------------
+      - name: 3. Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # -----------------------------------------------------------------
+      # 第 4 步: 编译应用程序 (根据构建模式选择不同参数)
+      # -----------------------------------------------------------------
+      - name: 4. Compile application
+        run: |
+          if ("${{ steps.prepare.outputs.build_mode }}" -eq "release") {
+            echo "Compiling Release Build (Optimized)..."
+            cl.exe /EHsc /W4 /O2 /GL /nologo ${{ env.SOURCE_FILE }} /Fe:${{ env.EXECUTABLE_NAME }}
+          } else {
+            echo "Compiling Development Build..."
+            cl.exe /EHsc /W4 /Zi /nologo ${{ env.SOURCE_FILE }} /Fe:${{ env.EXECUTABLE_NAME }}
+          }
+        shell: pwsh
+
+      # -----------------------------------------------------------------
+      # 第 5 步 (A): 上传开发版产物
+      # -----------------------------------------------------------------
+      - name: 5a. Upload Development Artifact
+        if: steps.prepare.outputs.build_mode == 'development'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dev-build
+          path: ${{ env.EXECUTABLE_NAME }}
+
+      # -----------------------------------------------------------------
+      # 第 5 步 (B): 打包并发布 Release
+      # -----------------------------------------------------------------
+      - name: 5b. Package Release Asset
+        if: steps.prepare.outputs.build_mode == 'release'
+        run: Compress-Archive -Path ${{ env.EXECUTABLE_NAME }} -DestinationPath "${{ env.EXECUTABLE_NAME }}.zip"
+        shell: pwsh
+
+      - name: 5c. Create GitHub Release
+        if: steps.prepare.outputs.build_mode == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prepare.outputs.release_version }}
+          files: "${{ env.EXECUTABLE_NAME }}.zip"
+          generate_release_notes: true

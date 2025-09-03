@@ -38,6 +38,8 @@ env:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    permissions:
+      contents: write
     
     # 定义任务的输出，我们稍后会用到
     outputs:

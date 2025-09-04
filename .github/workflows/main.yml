@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: '选择构建类型'
+        description: 'Select Bulid Type'
         type: choice
         options:
         - development
@@ -24,12 +24,12 @@ on:
         required: true
         default: 'development'
       version_tag:
-        description: '【仅发布版需要】输入版本号 (例如: v1.1.0)'
+        description: 'Tag (Only needed for release bulid)'
         required: false
 
 # 全局环境变量
 env:
-  EXECUTABLE_NAME: KillProcesses.exe
+  EXECUTABLE_NAME: LibreLibrary.exe
   SOURCE_FILE: main.cpp
 
 # ===============================================================
@@ -68,7 +68,7 @@ jobs:
             if ($buildMode -eq "release") {
               $releaseVersion = "${{ github.event.inputs.version_tag }}"
               if (-not $releaseVersion) {
-                Write-Error "错误：手动触发发布时，必须在'版本号'输入框中提供一个版本号！"
+                Write-Error "Error: You must provide a Tag for release bulid!"
                 exit 1
               }
             }
@@ -120,15 +120,10 @@ jobs:
       # -----------------------------------------------------------------
       # 第 5 步 (B): 打包并发布 Release
       # -----------------------------------------------------------------
-      - name: 5b. Package Release Asset
-        if: steps.prepare.outputs.build_mode == 'release'
-        run: Compress-Archive -Path ${{ env.EXECUTABLE_NAME }} -DestinationPath "${{ env.EXECUTABLE_NAME }}.zip"
-        shell: pwsh
-
-      - name: 5c. Create GitHub Release
+      - name: 5b. Create GitHub Release
         if: steps.prepare.outputs.build_mode == 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prepare.outputs.release_version }}
-          files: "${{ env.EXECUTABLE_NAME }}.zip"
+          files: "${{ env.EXECUTABLE_NAME }}.exe"
           generate_release_notes: true
